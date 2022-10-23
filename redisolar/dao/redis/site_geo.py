@@ -14,6 +14,7 @@ CAPACITY_THRESHOLD = 0.2
 
 class SiteGeoDaoRedis(SiteGeoDaoBase, RedisDaoBase):
     """SiteGeoDaoRedis persists and queries Sites in Redis."""
+
     def insert(self, site: Site, **kwargs):
         """Insert a Site into Redis."""
         hash_key = self.key_schema.site_hash_key(site.id)
@@ -54,28 +55,25 @@ class SiteGeoDaoRedis(SiteGeoDaoBase, RedisDaoBase):
 
     def _find_by_geo_with_capacity(self, query: GeoQuery, **kwargs) -> Set[Site]:
         # START Challenge #5
-        # Your task: Get the sites matching the GEO query.
+        geo_radius_key = self.key_schema.site_geo_key()
+        site_ids: List[str] = self.redis.georadius(geo_radius_key, query.coordinate.lng, query.coordinate.lat,
+                                                   query.radius,
+                                                   query.radius_unit.value)
         # END Challenge #5
 
         p = self.redis.pipeline(transaction=False)
 
         # START Challenge #5
-        #
-        # Your task: Populate a dictionary called "scores" whose keys are site
-        # IDs and whose values are the site's capacity.
-        #
-        # Make sure to run any Redis commands against a Pipeline object
-        # for better performance.
-        # END Challenge #5
+        geo_radius_key = self.key_schema.capacity_ranking_key()
+        for site_id in site_ids:
+            p.zscore(geo_radius_key, site_id)
 
-        # Delete the next lines after you've populated a `site_ids`
-        # and `scores` variable.
-        site_ids: List[str] = []
-        scores: Dict[str, float] = {}
+        scores: Dict[str, float] = dict(zip(site_ids, p.execute()))
+        # END Challenge #5
 
         for site_id in site_ids:
             if scores[site_id] and scores[site_id] > CAPACITY_THRESHOLD:
-                p.hgetall(self.key_schema.site_hash_key(site_id))
+                p.hgetall(self.key_schema.site_hash_key(int(site_id)))
         site_hashes = p.execute()
 
         return {FlatSiteSchema().load(site) for site in site_hashes}
