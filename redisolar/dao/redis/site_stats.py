@@ -8,6 +8,7 @@ from redisolar.models import MeterReading
 from redisolar.models import SiteStats
 from redisolar.schema import SiteStatsSchema
 from redisolar.scripts import CompareAndUpdateScript
+from redisolar.scripts.compare_and_update import ScriptOperation
 
 WEEK_SECONDS = 60 * 60 * 24 * 7
 
@@ -55,23 +56,28 @@ class SiteStatsDaoRedis(SiteStatsDaoBase, RedisDaoBase):
 
     def _update_optimized(self, key: str, meter_reading: MeterReading,
                           pipeline: redis.client.Pipeline = None) -> None:
-        execute = False
         if pipeline is None:
             pipeline = self.redis.pipeline()
-            execute = True
+        pipeline.transaction = True
 
         # START Challenge #3
+        reporting_time = datetime.datetime.utcnow().isoformat()
+        pipeline.hset(key, SiteStats.LAST_REPORTING_TIME, reporting_time)
+        pipeline.hincrby(key, SiteStats.COUNT, 1)
+        pipeline.expire(key, WEEK_SECONDS)
+
+        script = CompareAndUpdateScript(self.redis)
+        script.update(pipeline, key, SiteStats.MAX_WH, meter_reading.wh_generated, ScriptOperation.GREATER_THAN)
+        script.update(pipeline, key, SiteStats.MIN_WH, meter_reading.wh_generated, ScriptOperation.LESS_THAN)
+        script.update(pipeline, key, SiteStats.MAX_CAPACITY, meter_reading.wh_generated, ScriptOperation.GREATER_THAN)
         # END Challenge #3
 
-        if execute:
-            pipeline.execute()
+        pipeline.execute()
 
     def update(self, meter_reading: MeterReading, **kwargs) -> None:
         key = self.key_schema.site_stats_key(meter_reading.site_id,
                                              meter_reading.timestamp)
-        # Remove for Challenge #3
-        self._update_basic(key, meter_reading)
 
         # Uncomment the following two lines for Challenge #3
-        # pipeline = kwargs.get('pipeline')
-        # self._update_optimized(key, meter_reading, pipeline)
+        pipeline = kwargs.get('pipeline')
+        self._update_optimized(key, meter_reading, pipeline)
