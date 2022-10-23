@@ -5,7 +5,7 @@ import redis
 from redisolar.dao.base import FeedDaoBase
 from redisolar.dao.redis.base import RedisDaoBase
 from redisolar.models import MeterReading
-from redisolar.schema import MeterReadingSchema
+from redisolar.schema import MeterReadingSchema, FlatSiteSchema
 
 
 class FeedDaoRedis(FeedDaoBase, RedisDaoBase):
@@ -28,6 +28,14 @@ class FeedDaoRedis(FeedDaoBase, RedisDaoBase):
                 pipeline: redis.client.Pipeline) -> None:
         """Helper method to insert a meter reading."""
         # START Challenge #6
+        site_feed_key = self.key_schema.feed_key(meter_reading.site_id)
+        global_feed_key = self.key_schema.global_feed_key()
+
+        values = MeterReadingSchema().dump(meter_reading)
+        pipeline.xadd(site_feed_key, values, maxlen=FeedDaoRedis.SITE_MAX_FEED_LENGTH)
+        pipeline.xadd(global_feed_key, values, maxlen=FeedDaoRedis.GLOBAL_MAX_FEED_LENGTH)
+
+        pipeline.execute()
         # END Challenge #6
 
     def get_recent_global(self, limit: int, **kwargs) -> List[MeterReading]:
